@@ -65,6 +65,11 @@ class BayesianNetwork:
     def parents(self, variable: str) -> List[str]:
         return list(self._parent_order[variable])
 
+    @property
+    def structure(self) -> Dict[str, List[str]]:
+        """Mapping from each variable to its ordered list of parents."""
+        return {v: list(ps) for v, ps in self._parent_order.items()}
+
     def cardinality(self, variable: str) -> int:
         return len(self.states[variable])
 
@@ -98,14 +103,26 @@ class BayesianNetwork:
             prob *= self._tables[var][idx]
         return float(prob)
 
-    def log_likelihood(self, data: pd.DataFrame) -> float:
-        """Total log-likelihood of a dataset of state names under the model."""
+    def row_log_likelihood(self, data: pd.DataFrame, floor: Optional[float] = None) -> np.ndarray:
+        """Log-probability of each row of a dataset of state names.
+
+        If `floor` is given, probabilities are clipped from below at that value so that
+        rows impossible under the model receive a large finite penalty instead of -inf.
+        """
         codes = self._encode(data)
-        total = 0.0
+        total = np.zeros(len(data))
         for var in self.states:
             index = tuple(codes[p] for p in self._parent_order[var]) + (codes[var],)
-            total += float(np.log(self._tables[var][index]).sum())
+            probs = self._tables[var][index]
+            if floor is not None:
+                probs = np.maximum(probs, floor)
+            with np.errstate(divide="ignore"):
+                total += np.log(probs)
         return total
+
+    def log_likelihood(self, data: pd.DataFrame, floor: Optional[float] = None) -> float:
+        """Total log-likelihood of a dataset of state names under the model."""
+        return float(self.row_log_likelihood(data, floor).sum())
 
     def joint_factor(self) -> DiscreteFactor:
         """Full joint distribution as a single factor (exponential in size; small networks only)."""
@@ -114,6 +131,14 @@ class BayesianNetwork:
             cpd = self.cpd_factor(var)
             factor = cpd if factor is None else factor.product(cpd)
         return factor
+
+    def marginal_table(self, variables: Sequence[str]) -> np.ndarray:
+        """Joint marginal over `variables` as an array with axes in the given order."""
+        variables = list(variables)
+        joint = self.joint_factor()
+        others = [v for v in joint.variables if v not in variables]
+        reduced = joint.marginalize(others) if others else joint
+        return reduced.as_array(variables)
 
     def marginal(self, variable: str, evidence: Optional[Mapping[str, str]] = None) -> pd.Series:
         """Exact P(variable | evidence) by brute-force enumeration over the joint."""

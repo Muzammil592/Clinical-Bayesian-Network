@@ -31,6 +31,12 @@ class DiscreteFactor:
         shape = [self.cardinalities.get(v, 1) for v in order]
         return array.reshape(shape)
 
+    def as_array(self, order: List[str]) -> np.ndarray:
+        """Values as an array whose axes follow `order` (a permutation of the factor's variables)."""
+        if sorted(order) != sorted(self.variables):
+            raise ValueError("order must be a permutation of the factor's variables.")
+        return np.transpose(self.values, [self.variables.index(v) for v in order])
+
     def copy(self) -> "DiscreteFactor":
         return DiscreteFactor(self.variables, [self.cardinalities[v] for v in self.variables], self.values.copy())
 
