@@ -1,4 +1,4 @@
-g# Clinical Bayesian Network
+# Clinical Bayesian Network
 
 A from-scratch implementation of discrete probabilistic graphical models (Bayesian networks)
 applied to respiratory-disease diagnosis. The project builds a reference clinical network,
@@ -45,6 +45,8 @@ utilities/   Configuration, logging, I/O and information-theoretic helpers
 | `src/evaluation.py`        | KL divergence, held-out likelihood and CPT comparison metrics  |
 | `src/learn_parameters.py`  | Fits estimators on training data and reports held-out results  |
 | `src/sample_size_study.py` | Estimation error as a function of training-set size            |
+| `src/inference.py`         | Variable elimination: posteriors, MAP, evidence probability    |
+| `src/run_inference_queries.py` | Clinical queries, explaining away, diagnostic evaluation   |
 | `src/sanity_checks.py`     | Verification of all components                                 |
 
 ## Setup
@@ -65,6 +67,7 @@ python -m src.generate_dataset   # writes data/clinical_observations.csv
 python -m src.explore_data       # prints diagnostics, writes data/pairwise_mutual_information.csv
 python -m src.learn_parameters   # fits MLE / Bayesian CPTs, writes data/learned_parameter_comparison.csv
 python -m src.sample_size_study  # error vs training size, writes data/sample_size_study.csv
+python -m src.run_inference_queries  # exact inference demos and diagnostic evaluation
 ```
 
 Querying the model:
@@ -88,6 +91,17 @@ learned = estimator.fit(training_data)
 network_kl_divergence(network, learned)
 ```
 
+Exact inference:
+
+```python
+from src.inference import VariableElimination
+
+engine = VariableElimination(network, heuristic="min_fill")
+engine.posterior("LungDisease", {"Cough": "yes", "XRay": "abnormal"})
+engine.map_assignment(["LungDisease", "Bronchitis"], {"Cough": "yes", "XRay": "abnormal"})
+engine.evidence_probability({"Cough": "yes"})
+```
+
 ## Project status
 
 **Completed**
@@ -101,8 +115,10 @@ network_kl_divergence(network, learned)
 - Parameter learning: maximum likelihood and Bayesian estimation (BDeu and K2 Dirichlet priors)
 - Evaluation: KL divergence via the chain rule, held-out log-likelihood, zero-probability detection
 - Sample-size study comparing estimators across training-set sizes
+- Exact inference by variable elimination with ordering heuristics and barren-node pruning
+- Posterior, joint posterior, marginal MAP and evidence-probability queries
+- Diagnostic evaluation (AUC, log-loss, Brier score) of reference and learned networks
 
 **Planned**
-- Exact inference with variable elimination
 - Structure learning with score-based search (BIC) and comparison against the true graph
 - Model evaluation: held-out likelihood, structural Hamming distance, posterior-query accuracy

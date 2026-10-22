@@ -34,6 +34,19 @@ class LearningConfig:
     likelihood_floor: float = 1e-12
 
 
+@dataclass(frozen=True)
+class InferenceConfig:
+    """Settings for diagnostic inference experiments."""
+
+    target: str = "LungDisease"
+    positive_state: str = "present"
+    observed: tuple = ("Age", "Pollution", "Smoking", "Cough", "Dyspnea", "XRay")
+    training_sizes: tuple = (100, 1_000, 16_000)
+    heuristic: str = "min_fill"
+
+
 MUTUAL_INFORMATION_FILENAME = "pairwise_mutual_information.csv"
 PARAMETER_COMPARISON_FILENAME = "learned_parameter_comparison.csv"
 SAMPLE_SIZE_STUDY_FILENAME = "sample_size_study.csv"
+INFERENCE_QUERIES_FILENAME = "inference_queries.csv"
+DIAGNOSTIC_EVALUATION_FILENAME = "diagnostic_evaluation.csv"

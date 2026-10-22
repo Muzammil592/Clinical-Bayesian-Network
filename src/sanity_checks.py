@@ -12,6 +12,7 @@ import numpy as np
 from src.clinical_network import build_clinical_network
 from src.evaluation import exact_joint_kl, network_kl_divergence
 from src.factor import DiscreteFactor
+from src.inference import HEURISTICS, VariableElimination, ZeroProbabilityEvidenceError
 from src.parameter_learning import BayesianEstimator, MaximumLikelihoodEstimator
 from utilities.logging_utils import get_logger
 
@@ -97,6 +98,64 @@ def check_parameter_learning(network) -> None:
     logger.info("Smoothing removes zero probabilities: OK")
 
 
+def check_inference(network) -> None:
+    engine = VariableElimination(network)
+    cases = [
+        ("LungDisease", {"Cough": "yes", "XRay": "abnormal"}),
+        ("Bronchitis", {"Cough": "yes", "Dyspnea": "yes", "XRay": "abnormal"}),
+        ("Smoking", {"LungDisease": "present", "Pollution": "high"}),
+        ("Age", {"Dyspnea": "yes"}),
+        ("XRay", {}),
+    ]
+    for variable, evidence in cases:
+        assert np.allclose(engine.posterior(variable, evidence), network.marginal(variable, evidence)), (variable, evidence)
+    logger.info("Variable elimination matches enumeration: OK")
+
+    evidence = {"Cough": "yes", "XRay": "abnormal"}
+    reference = network.marginal("LungDisease", evidence)
+    for heuristic in HEURISTICS:
+        for prune in (True, False):
+            posterior = VariableElimination(network, heuristic, prune).posterior("LungDisease", evidence)
+            assert np.allclose(posterior, reference), (heuristic, prune)
+    custom = engine.query("LungDisease", evidence, order=["Bronchitis", "Smoking", "Pollution", "Age"])
+    assert np.allclose(custom.values, reference.values)
+    logger.info("Heuristics, pruning and custom orders agree: OK")
+
+    expected = network.joint_factor().reduce(
+        {v: network.state_index(v, s) for v, s in evidence.items()}
+    ).values.sum()
+    assert np.isclose(engine.evidence_probability(evidence), expected)
+    assert np.isclose(engine.evidence_probability({}), 1.0)
+    logger.info("Evidence probability: OK")
+
+    joint = engine.joint_posterior(["LungDisease", "Bronchitis"], evidence)
+    assert np.isclose(joint.sum(), 1.0)
+    assert np.allclose(joint.groupby(level="LungDisease").sum(), reference)
+    assignment, _ = engine.map_assignment(["LungDisease", "Bronchitis"], evidence)
+    assert assignment == {"LungDisease": "present", "Bronchitis": "absent"}
+    logger.info("Joint posterior and MAP assignment: OK")
+
+    # Graph independence statements must hold numerically (d-separation <-> inference).
+    assert network.graph.d_separated("Age", "LungDisease", ["Smoking"])
+    assert np.allclose(
+        engine.posterior("Age", {"Smoking": "yes", "LungDisease": "present"}),
+        engine.posterior("Age", {"Smoking": "yes"}),
+    )
+    assert not np.allclose(
+        engine.posterior("Pollution", {"LungDisease": "present"}),
+        engine.posterior("Pollution", {"LungDisease": "present", "Smoking": "yes"}),
+    )
+    logger.info("Inference respects d-separation: OK")
+
+    impossible = MaximumLikelihoodEstimator.from_network(network).fit(network.sample(60, seed=2).query("XRay == 'normal'"))
+    try:
+        VariableElimination(impossible).posterior("LungDisease", {"XRay": "abnormal"})
+    except ZeroProbabilityEvidenceError:
+        logger.info("Impossible evidence is rejected: OK")
+    else:
+        raise AssertionError("Zero-probability evidence was not detected.")
+
+
 def main() -> None:
     network = build_clinical_network()
     logger.info("Parameters in model: %d", network.number_of_parameters())
@@ -105,6 +164,7 @@ def main() -> None:
     check_independencies(network)
     check_sampling(network)
     check_parameter_learning(network)
+    check_inference(network)
     logger.info("All checks passed.")
 
 
