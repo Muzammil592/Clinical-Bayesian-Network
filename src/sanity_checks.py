@@ -12,6 +12,10 @@ import numpy as np
 from src.clinical_network import build_clinical_network
 from src.evaluation import exact_joint_kl, network_kl_divergence
 from src.factor import DiscreteFactor
+from src.graph import DirectedGraph
+from src.graph_metrics import cpdag, cpdag_shd, markov_equivalent, structure_comparison
+from src.scoring import DecomposableScore, DiscreteDataset
+from src.structure_learning import HillClimbSearch
 from src.inference import HEURISTICS, VariableElimination, ZeroProbabilityEvidenceError
 from src.parameter_learning import BayesianEstimator, MaximumLikelihoodEstimator
 from utilities.logging_utils import get_logger
@@ -156,6 +160,58 @@ def check_inference(network) -> None:
         raise AssertionError("Zero-probability evidence was not detected.")
 
 
+def check_graph_editing() -> None:
+    graph = DirectedGraph.from_edges(["A", "B", "C"], [("A", "B"), ("B", "C")])
+    clone = graph.copy()
+    clone.remove_edge("A", "B")
+    assert graph.has_edge("A", "B") and not clone.has_edge("A", "B")
+    assert graph.would_create_cycle("C", "A") and not graph.would_create_cycle("A", "C")
+    logger.info("Graph editing and cycle checks: OK")
+
+
+def check_equivalence_classes(network) -> None:
+    chain = DirectedGraph.from_edges("ABC", [("A", "B"), ("B", "C")])
+    reverse = DirectedGraph.from_edges("ABC", [("C", "B"), ("B", "A")])
+    fork = DirectedGraph.from_edges("ABC", [("B", "A"), ("B", "C")])
+    collider = DirectedGraph.from_edges("ABC", [("A", "B"), ("C", "B")])
+    assert markov_equivalent(chain, reverse) and markov_equivalent(chain, fork)
+    assert not markov_equivalent(chain, collider)
+    assert cpdag_shd(chain, reverse) == 0 and cpdag_shd(chain, collider) == 2
+    directed, undirected = cpdag(network.graph)
+    assert ("LungDisease", "XRay") in directed and ("Pollution", "LungDisease") in directed
+    assert undirected == {frozenset({"Age", "Smoking"}), frozenset({"Bronchitis", "Smoking"})}
+    assert cpdag_shd(network.graph, network.graph) == 0
+    logger.info("CPDAG construction and Markov equivalence: OK")
+
+
+def check_scores(network) -> None:
+    data = network.sample(20_000, seed=3)
+    dataset = DiscreteDataset(data, network.states)
+    empty = {v: [] for v in network.variables}
+    for kind in ("bic", "k2", "bdeu"):
+        score = DecomposableScore(dataset, kind)
+        assert score.total(network.structure) > score.total(empty)
+        forward = dict(empty, Smoking=["Age"])
+        backward = dict(empty, Age=["Smoking"])
+        if kind != "k2":  # K2 is not score-equivalent; BIC and BDeu are
+            assert np.isclose(score.total(forward), score.total(backward)), kind
+    assert dataset.family_counts("Cough", ["LungDisease", "Bronchitis"]).sum() == len(data)
+    logger.info("Scores prefer the true structure and BIC/BDeu are score-equivalent: OK")
+
+
+def check_structure_learning(network) -> None:
+    data = network.sample(50_000, seed=5)
+    score = DecomposableScore(DiscreteDataset(data, network.states), "bic")
+    result = HillClimbSearch(score, max_indegree=3, restarts=10, perturbation_steps=10, seed=0).fit()
+    assert result.score >= score.total({v: [] for v in network.variables})
+    assert result.score >= score.total(network.structure) - 1e-6
+    comparison = structure_comparison(network.graph, result.graph)
+    assert comparison["skeleton_f1"] == 1.0, comparison
+    assert max(len(result.graph.parents(v)) for v in result.graph.nodes) <= 3
+    result.graph.topological_order()  # raises if the learned graph is cyclic
+    logger.info("Hill climbing recovers the true skeleton from 50k samples (CPDAG SHD %d): OK", comparison["cpdag_shd"])
+
+
 def main() -> None:
     network = build_clinical_network()
     logger.info("Parameters in model: %d", network.number_of_parameters())
@@ -165,6 +221,10 @@ def main() -> None:
     check_sampling(network)
     check_parameter_learning(network)
     check_inference(network)
+    check_graph_editing()
+    check_equivalence_classes(network)
+    check_scores(network)
+    check_structure_learning(network)
     logger.info("All checks passed.")
 
 

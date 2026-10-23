@@ -35,6 +35,34 @@ class DirectedGraph:
         self._parents[child].append(parent)
         self._children[parent].append(child)
 
+    def remove_edge(self, parent: str, child: str) -> None:
+        if not self.has_edge(parent, child):
+            raise KeyError(f"Edge {parent} -> {child} does not exist.")
+        self._parents[child].remove(parent)
+        self._children[parent].remove(child)
+
+    def has_edge(self, parent: str, child: str) -> bool:
+        return parent in self._parents.get(child, [])
+
+    def would_create_cycle(self, parent: str, child: str) -> bool:
+        """True if adding parent -> child would make the graph cyclic."""
+        return parent == child or parent in self.descendants(child)
+
+    def copy(self) -> "DirectedGraph":
+        clone = DirectedGraph()
+        clone._parents = {n: list(ps) for n, ps in self._parents.items()}
+        clone._children = {n: list(cs) for n, cs in self._children.items()}
+        return clone
+
+    @classmethod
+    def from_edges(cls, nodes: Iterable[str], edges: Iterable[Tuple[str, str]] = ()) -> "DirectedGraph":
+        graph = cls()
+        for node in nodes:
+            graph.add_node(node)
+        for parent, child in edges:
+            graph.add_edge(parent, child)
+        return graph
+
     # ------------------------------------------------------------------ accessors
     @property
     def nodes(self) -> List[str]:
